@@ -1,0 +1,24 @@
+# MQTT-IOTA Bridge Requirements
+# Install with: pip install -r requirements.txt
+
+# MQTT Client
+paho-mqtt==1.6.1
+
+# Data handling
+dataclasses  # Built into Python 3.7+
+
+# Async support
+asyncio  # Built into Python
+
+# Optional: For web dashboard integration
+flask==2.3.3
+flask-cors==4.0.0
+
+# Optional: For monitoring and metrics
+psutil==5.9.5
+
+# Optional: For configuration management
+pyyaml==6.0.1
+
+# Optional: For enhanced logging
+colorlog==6.7.0

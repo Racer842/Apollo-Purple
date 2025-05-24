@@ -1,0 +1,14 @@
+2025-05-24 13:14:28,306 - INFO - MQTT-IOTA Bridge started
+2025-05-24 13:14:28,344 - INFO - Connected to MQTT broker
+2025-05-24 13:14:28,344 - INFO - Subscribed to topic: sensor/core2/+
+2025-05-24 13:14:28,344 - INFO - Subscribed to topic: sensor/esp32c3/+
+2025-05-24 13:14:28,344 - INFO - Subscribed to topic: commands/+
+2025-05-24 13:14:49,428 - INFO - Disconnected from MQTT broker
+2025-05-24 13:14:49,429 - INFO - MQTT-IOTA Bridge stopped
+2025-05-24 13:22:10,051 - INFO - MQTT-IOTA Bridge started
+2025-05-24 13:22:10,051 - INFO - Connected to MQTT broker
+2025-05-24 13:22:10,052 - INFO - Subscribed to topic: sensor/core2/+
+2025-05-24 13:22:10,052 - INFO - Subscribed to topic: sensor/esp32c3/+
+2025-05-24 13:22:10,052 - INFO - Subscribed to topic: commands/+
+2025-05-24 13:22:50,208 - INFO - Disconnected from MQTT broker
+2025-05-24 13:22:50,208 - INFO - MQTT-IOTA Bridge stopped
