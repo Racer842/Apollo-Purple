@@ -16,7 +16,7 @@ from dataclasses import dataclass, asdict
 import threading
 import signal
 import sys
-# from iota_sdk import Client, utf8_to_hex, Utils
+from iota_sdk import Client, HexStr, utf8_to_hex
 
 # IOTA libraries
 try:

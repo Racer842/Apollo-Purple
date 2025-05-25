@@ -1,0 +1,53 @@
+cmake:
+  application:
+    configuration-dir: /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2
+    source-dir: /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2
+  board:
+    name: m5stack_core2
+    path:
+     - /Users/jakerussell/Documents/csse4011/zephyr/boards/m5stack/m5stack_core2
+    qualifiers: esp32/procpu
+    revision: 
+  devicetree:
+    bindings-dirs:
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/bindings
+    files:
+     - /Users/jakerussell/Documents/csse4011/zephyr/boards/m5stack/m5stack_core2/m5stack_core2_procpu.dts
+    include-dirs:
+     - /Users/jakerussell/Documents/csse4011/modules/hal/atmel/include
+     - /Users/jakerussell/Documents/csse4011/modules/hal/gigadevice/include
+     - /Users/jakerussell/Documents/csse4011/modules/hal/microchip/include
+     - /Users/jakerussell/Documents/csse4011/modules/hal/microchip/dts
+     - /Users/jakerussell/Documents/csse4011/modules/hal/nuvoton/dts
+     - /Users/jakerussell/Documents/csse4011/modules/hal/nxp/dts
+     - /Users/jakerussell/Documents/csse4011/modules/hal/stm32/dts
+     - /Users/jakerussell/Documents/csse4011/zephyr/include
+     - /Users/jakerussell/Documents/csse4011/zephyr/include/zephyr
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/common
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/x86
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/xtensa
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/sparc
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/riscv
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/posix
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/nios2
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/arm64
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/arm
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts/arc
+     - /Users/jakerussell/Documents/csse4011/zephyr/dts
+  kconfig:
+    files:
+     - /Users/jakerussell/Documents/csse4011/zephyr/boards/m5stack/m5stack_core2/m5stack_core2_procpu_defconfig
+     - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/prj.conf
+    user-files:
+     - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/prj.conf
+  toolchain:
+    name: zephyr
+    path: /Users/jakerussell/zephyr_install/zephyr-sdk-0.17.0
+  zephyr:
+    version: 4.1.0
+    zephyr-base: /Users/jakerussell/Documents/csse4011/zephyr
+version: 0.1.0
+west:
+  command: /Users/jakerussell/zephyr_install/env/bin/west build -b m5stack_core2/esp32/procpu Core2 -p
+  topdir: /Users/jakerussell/Documents/csse4011
+  version: 1.3.0

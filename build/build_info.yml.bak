@@ -1,0 +1,5 @@
+west:
+  command: /Users/jakerussell/zephyr_install/env/bin/west build -b m5stack_core2/esp32/procpu
+    Core2 -p
+  topdir: /Users/jakerussell/Documents/csse4011
+  version: 1.3.0
