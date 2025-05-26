@@ -1,204 +1,86 @@
-#!/usr/bin/env python3
-"""
-MQTT Message Sender for M5 Core2
-Sends periodic messages to the M5 Core2 device via MQTT broker
-"""
-
-import paho.mqtt.client as mqtt
-import time
 import json
-import random
+import time
 from datetime import datetime
+import paho.mqtt.client as mqtt
+from influxdb_client import InfluxDBClient, Point, WritePrecision
 
-# MQTT Configuration - Update with your Mac's IP if different
-MQTT_BROKER_HOST = "172.20.10.11"  # Your Mac's IP from the C code
-MQTT_BROKER_PORT = 1883
-MQTT_CLIENT_ID = "python_sender"
-MQTT_TOPIC_COMMAND = "m5core2/command"  # Topic the M5 Core2 is listening on
-MQTT_TOPIC_STATUS = "m5core2/status"    # Topic the M5 Core2 publishes to
+# --------------------------- Configuration ---------------------------
 
-# Message sending interval (seconds)
-MESSAGE_INTERVAL = 5
+# MQTT
+MQTT_BROKER = "172.20.10.11"
+MQTT_PORT = 1883
+C3_TOPIC = "esp32c3/sensors"
+CORE2_TOPIC = "m5core2/temp"
 
-# Global variables
-client = None
-message_counter = 0
+# InfluxDB
+INFLUX_URL = "http://localhost:8086"
+INFLUX_TOKEN = "F5UpKMQW8ooHbOsvAbkg69hfxv-r270T4N0HO7H-S_ooObPF_R3_XM53mBdeuntoOvl9BFGBXPZwcNMX3-_hoQ=="
+INFLUX_ORG = "CSSE_4011"
+INFLUX_BUCKET = "sensor_data"
+
+# --------------------------- InfluxDB Setup ---------------------------
+
+influx_client = InfluxDBClient(
+    url=INFLUX_URL,
+    token=INFLUX_TOKEN,
+    org=INFLUX_ORG
+)
+influx_write_api = influx_client.write_api(write_options=None)
+
+# --------------------------- MQTT Callbacks ---------------------------
 
 def on_connect(client, userdata, flags, rc):
-    """Callback for when the client receives a CONNACK response from the server."""
     if rc == 0:
-        print(f"✅ Connected to MQTT broker at {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
-        # Subscribe to status topic to see responses from M5 Core2
-        client.subscribe(MQTT_TOPIC_STATUS)
-        print(f"📡 Subscribed to {MQTT_TOPIC_STATUS}")
+        print("Connected to MQTT Broker!")
+        client.subscribe(C3_TOPIC)
     else:
-        print(f"❌ Failed to connect to MQTT broker. Return code: {rc}")
-
-def on_disconnect(client, userdata, rc):
-    """Callback for when the client disconnects from the server."""
-    print(f"🔌 Disconnected from MQTT broker. Return code: {rc}")
+        print(f"Failed to connect, return code {rc}")
 
 def on_message(client, userdata, msg):
-    """Callback for when a PUBLISH message is received from the server."""
-    topic = msg.topic
-    payload = msg.payload.decode('utf-8')
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    print(f"📨 [{timestamp}] Received from {topic}: {payload}")
-
-def on_publish(client, userdata, mid):
-    """Callback for when a message is published."""
-    print(f"📤 Message published successfully (message ID: {mid})")
-
-def create_test_messages():
-    """Create a variety of test messages to send to the M5 Core2."""
-    messages = [
-        "Hello from Python!",
-        "Testing MQTT communication",
-        "How are you doing, M5 Core2?",
-        "This is a test message",
-        "Greetings from your Mac!",
-        "MQTT is working great!",
-        "Keep up the good work!",
-        "Python says hello 👋",
-        "Time to shine, little device!",
-        "Another message from the mothership",
-    ]
-    
-    # Add some dynamic messages
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    messages.extend([
-        f"Current time: {timestamp}",
-        f"Random number: {random.randint(1, 100)}",
-        f"Message #{message_counter + 1}",
-    ])
-    
-    return messages
-
-def send_message():
-    """Send a message to the M5 Core2."""
-    global message_counter
-    
-    if not client or not client.is_connected():
-        print("❌ MQTT client not connected")
-        return False
-    
-    messages = create_test_messages()
-    message = random.choice(messages)
-    
     try:
-        # Send the message
-        result = client.publish(MQTT_TOPIC_COMMAND, message, qos=0)
-        
-        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            message_counter += 1
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            print(f"📝 [{timestamp}] Sent to M5 Core2: '{message}'")
-            return True
-        else:
-            print(f"❌ Failed to send message. Error code: {result.rc}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Error sending message: {e}")
-        return False
+        payload = json.loads(msg.payload.decode())
+        print(f"Received message on {msg.topic}: {json.dumps(payload, indent=2)}")
 
-def send_json_message():
-    """Send a JSON formatted message for more structured communication."""
-    global message_counter
-    
-    if not client or not client.is_connected():
-        print("❌ MQTT client not connected")
-        return False
-    
-    # Create a JSON message
-    json_msg = {
-        "id": message_counter + 1,
-        "timestamp": datetime.now().isoformat(),
-        "sender": "Python Script",
-        "message": f"JSON message #{message_counter + 1}",
-        "data": {
-            "temperature": round(random.uniform(20.0, 30.0), 1),
-            "humidity": random.randint(40, 80),
-            "status": "active"
-        }
-    }
-    
-    try:
-        json_string = json.dumps(json_msg, indent=None)
-        result = client.publish(MQTT_TOPIC_COMMAND, json_string, qos=0)
-        
-        if result.rc == mqtt.MQTT_ERR_SUCCESS:
-            message_counter += 1
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            print(f"📋 [{timestamp}] Sent JSON to M5 Core2: {json_string}")
-            return True
-        else:
-            print(f"❌ Failed to send JSON message. Error code: {result.rc}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Error sending JSON message: {e}")
-        return False
+        timestamp = datetime.utcnow()
 
-def main():
-    """Main function to run the MQTT message sender."""
-    global client
-    
-    print("🚀 Starting MQTT Message Sender for M5 Core2")
-    print(f"📡 Broker: {MQTT_BROKER_HOST}:{MQTT_BROKER_PORT}")
-    print(f"📨 Sending to topic: {MQTT_TOPIC_COMMAND}")
-    print(f"📢 Listening to topic: {MQTT_TOPIC_STATUS}")
-    print(f"⏰ Message interval: {MESSAGE_INTERVAL} seconds")
-    print("-" * 50)
-    
-    # Create and configure MQTT client
-    client = mqtt.Client(client_id=MQTT_CLIENT_ID, clean_session=True)
-    client.on_connect = on_connect
-    client.on_disconnect = on_disconnect
-    client.on_message = on_message
-    client.on_publish = on_publish
-    
-    try:
-        # Connect to the broker
-        print(f"🔄 Connecting to MQTT broker...")
-        client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
-        
-        # Start the network loop in a separate thread
-        client.loop_start()
-        
-        # Wait a moment for connection
-        time.sleep(2)
-        
-        if not client.is_connected():
-            print("❌ Failed to connect to MQTT broker. Check your broker settings.")
-            return
-        
-        print("✅ Ready to send messages! Press Ctrl+C to stop.")
-        print("-" * 50)
-        
-        # Main message sending loop
-        message_count = 0
-        while True:
-            # Alternate between regular and JSON messages
-            if message_count % 4 == 3:  # Every 4th message is JSON
-                send_json_message()
-            else:
-                send_message()
-            
-            message_count += 1
-            
-            # Wait for the specified interval
-            time.sleep(MESSAGE_INTERVAL)
-            
-    except KeyboardInterrupt:
-        print("\n🛑 Stopping message sender...")
-    except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-    finally:
-        if client:
-            client.loop_stop()
-            client.disconnect()
-            print("👋 Disconnected from MQTT broker. Goodbye!")
+        # Store each Thingy52 set in InfluxDB
+        for idx, thing in enumerate(payload.get("thingy52", [])):
+            point = (
+                Point(f"thingy52_{idx}")
+                .field("temperature", thing["temp"])
+                .field("humidity", thing["humidity"])
+                .field("co2", thing["co2"])
+                .time(timestamp, WritePrecision.NS)
+            )
+            influx_write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point)
 
-if __name__ == "__main__":
-    main()
+        # Moisture sensor data
+        point_moisture = (
+            Point("moisture")
+            .field("moisture1", payload.get("moisture1", 0))
+            .field("moisture2", payload.get("moisture2", 0))
+            .time(timestamp, WritePrecision.NS)
+        )
+        influx_write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=point_moisture)
+
+        # Prepare and publish temperature data for Core2
+        temps = [t["temp"] for t in payload.get("thingy52", [])]
+        avg_temp = sum(temps) / len(temps) if temps else 0
+
+        core2_payload = json.dumps({"average_temp": avg_temp})
+        client.publish(CORE2_TOPIC, core2_payload)
+        print(f"Published average temperature to {CORE2_TOPIC}: {core2_payload}")
+
+    except Exception as e:
+        print(f"Error handling message: {e}")
+
+# --------------------------- MQTT Setup ---------------------------
+
+client = mqtt.Client()
+client.on_connect = on_connect
+client.on_message = on_message
+
+client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+
+print("Starting MQTT loop...")
+client.loop_forever()

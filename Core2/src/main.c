@@ -103,66 +103,37 @@ static int connect_to_wifi(void)
 }
 /************************************************************************/
 
-/* Simplified and safer function to process received MQTT messages */
-static void process_received_message(const struct mqtt_publish_param *pub_param)
+static void process_mqtt_payload(struct mqtt_client *client, const struct mqtt_publish_param *pub_param)
 {
-    static char topic_str[64];
-    static char message_str[128];
-    
-    /* Safety check for null parameter */
-    if (!pub_param) {
-        LOG_ERR("Null publish parameter");
+    if (!client || !pub_param) {
         return;
     }
     
-    /* Clear buffers */
-    memset(topic_str, 0, sizeof(topic_str));
-    memset(message_str, 0, sizeof(message_str));
+    uint32_t payload_len = pub_param->message.payload.len;
     
-    /* Extract topic with safety checks */
-    if (pub_param->message.topic.topic.utf8 != NULL && 
-        pub_param->message.topic.topic.size > 0 && 
-        pub_param->message.topic.topic.size < sizeof(topic_str)) {
-        
-        memcpy(topic_str, pub_param->message.topic.topic.utf8, 
-               pub_param->message.topic.topic.size);
-        topic_str[pub_param->message.topic.topic.size] = '\0';
-    } else {
-        strncpy(topic_str, "Unknown", sizeof(topic_str) - 1);
+    if (payload_len == 0) {
+        return;
     }
     
-    /* Extract message payload with safety checks - FIXED */
-    if (pub_param->message.payload.data != NULL && 
-        pub_param->message.payload.len > 0 && 
-        pub_param->message.payload.len < sizeof(message_str)) {
-        
-        /* Copy the payload data */
-        memcpy(message_str, pub_param->message.payload.data, 
-               pub_param->message.payload.len);
-        message_str[pub_param->message.payload.len] = '\0';
-        
-        /* Debug: Print each byte to see what we're getting */
-        LOG_DBG("Payload bytes:");
-        for (int i = 0; i < pub_param->message.payload.len; i++) {
-            LOG_DBG("  [%d]: 0x%02x ('%c')", i, 
-                   ((uint8_t*)pub_param->message.payload.data)[i],
-                   ((uint8_t*)pub_param->message.payload.data)[i]);
-        }
-    } else {
-        strncpy(message_str, "Empty", sizeof(message_str) - 1);
-        LOG_DBG("Payload data is NULL or invalid length: %d", pub_param->message.payload.len);
+    // Create buffer for payload
+    uint8_t payload_buffer[256];
+    uint32_t buffer_size = sizeof(payload_buffer) - 1;
+    uint32_t bytes_to_read = payload_len < buffer_size ? payload_len : buffer_size;
+    
+    // Use mqtt_read_publish_payload to safely read the payload
+    int bytes_read = mqtt_read_publish_payload(client, payload_buffer, bytes_to_read);
+    
+    if (bytes_read < 0) {
+        LOG_ERR("Failed to read payload: %d", bytes_read);
+        return;
     }
     
-    /* Simple logging */
-    LOG_INF("MQTT RX - Topic: '%s', Message: '%s', Len: %d", 
-            topic_str, message_str, pub_param->message.payload.len);
-    
-    /* Basic command processing */
-    if (strstr(topic_str, "command") != NULL) {
-        LOG_INF("Command received: %s", message_str);
-    }
+    // Null terminate and print the message
+    payload_buffer[bytes_read] = '\0';
+    LOG_INF("Received: %s", payload_buffer);
 }
 
+// Updated MQTT event handler - replace your existing MQTT_EVT_PUBLISH case
 static void mqtt_evt_handler(struct mqtt_client *const client,
                             const struct mqtt_evt *evt)
 {
@@ -182,22 +153,24 @@ static void mqtt_evt_handler(struct mqtt_client *const client,
         break;
 
     case MQTT_EVT_PUBLISH: {
-        LOG_DBG("MQTT_EVT_PUBLISH received");
-        
         if (evt->result != 0) {
             LOG_ERR("MQTT PUBLISH error: %d", evt->result);
             break;
         }
         
-        /* Get publish parameter safely */
-        const struct mqtt_publish_param *p = &evt->param.publish;
+        if (evt->param.publish.message.payload.len == 0) {
+            break;
+        }
         
-        /* Basic safety check */
-        if (p && p->message.payload.len >= 0) {
-            LOG_DBG("Payload length: %d", p->message.payload.len);
-            process_received_message(p);
-        } else {
-            LOG_ERR("Invalid publish parameter");
+        // Process the received message
+        process_mqtt_payload(client, &evt->param.publish);
+        
+        // Acknowledge if QoS 1
+        if (evt->param.publish.message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
+            struct mqtt_puback_param puback = {
+                .message_id = evt->param.publish.message_id
+            };
+            mqtt_publish_qos1_ack(client, &puback);
         }
         
         break;
@@ -303,20 +276,21 @@ static void poll_mqtt_client(void)
 {
     int ret;
 
-    if (zsock_poll(fds, nfds, 0) < 0) {
+    if (zsock_poll(fds, nfds, 100) < 0) {  // Add timeout
         return;
     }
 
     if ((fds[0].revents & ZSOCK_POLLIN) == ZSOCK_POLLIN) {
         ret = mqtt_input(&client_ctx);
         if (ret != 0) {
-            /* Handle specific error codes */
             if (ret == -EAGAIN || ret == -EWOULDBLOCK) {
-                /* This is normal - no more data available right now */
                 LOG_DBG("mqtt_input: no more data available (%d)", ret);
             } else if (ret == -ENOTCONN) {
                 LOG_ERR("mqtt_input: connection lost (%d)", ret);
                 connected = false;
+            } else if (ret == -EBUSY) {
+                LOG_DBG("mqtt_input: busy, retrying later (%d)", ret);
+                k_msleep(10);  // Brief delay for busy condition
             } else {
                 LOG_ERR("mqtt_input error: %d", ret);
             }
@@ -324,13 +298,8 @@ static void poll_mqtt_client(void)
         }
     }
 
-    if ((fds[0].revents & ZSOCK_POLLERR) == ZSOCK_POLLERR) {
-        LOG_ERR("MQTT socket error");
-        connected = false;
-    }
-
-    if ((fds[0].revents & ZSOCK_POLLHUP) == ZSOCK_POLLHUP) {
-        LOG_ERR("MQTT socket hangup");
+    if ((fds[0].revents & (ZSOCK_POLLERR | ZSOCK_POLLHUP))) {
+        LOG_ERR("MQTT socket error/hangup");
         connected = false;
     }
 }
@@ -401,6 +370,9 @@ void mqtt_thread (void) {
     /* Main loop */
     while (1) {
         poll_mqtt_client();
+        if (connected) {
+            mqtt_live(&client_ctx);  // Keep connection alive
+        }
 
         /* Publish status message every 10 seconds */
         static uint64_t last_publish = 0;
