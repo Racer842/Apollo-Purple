@@ -4,21 +4,24 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/drivers/display.h>
+#include <zephyr/drivers/pwm.h>
 #include <zephyr/random/random.h>
-#include <lvgl.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
-LOG_MODULE_REGISTER(core2_view, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(disco_servo, LOG_LEVEL_INF);
 
 #define WIFI_SSID "Jake_iphone"
 #define WIFI_PSK  "bbbooooo"
 
 #define MQTT_BROKER_ADDR "172.20.10.11"
 #define MQTT_BROKER_PORT 1883
-#define MQTT_CLIENT_ID "m5core2_display"
-#define MQTT_TOPIC_SUB "m5core2/temp"
+#define MQTT_CLIENT_ID "disco_servo_control"
+
+/* MQTT Topics for Servo Control */
+#define MQTT_TOPIC_PAN_ANGLE   "servo/pan/angle"
+#define MQTT_TOPIC_TILT_ANGLE  "servo/tilt/angle"
 
 static struct mqtt_client client_ctx;
 static uint8_t rx_buffer[128], tx_buffer[128];
@@ -27,15 +30,10 @@ static struct zsock_pollfd fds[1];
 static int nfds;
 static bool connected = false;
 
-static lv_obj_t *quads[4];
-static lv_obj_t *quad_labels[4];
-static float temps[4] = {29.3, 32.4, 26.3, 3.7}; // Initial values
-static bool display_needs_update = false;
-
-// Global display device
-static const struct device *display_dev;
-
 /************************************************************************/
+/* WIFI CONFIGURATION                                                   */
+/************************************************************************/
+
 #define NET_EVENT_WIFI_MASK                                                                        \
 	(NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT |                        \
 	 NET_EVENT_WIFI_AP_ENABLE_RESULT | NET_EVENT_WIFI_AP_DISABLE_RESULT |                      \
@@ -43,11 +41,8 @@ static const struct device *display_dev;
 
 /* Network management */
 static struct net_mgmt_event_callback wifi_cb;
-
 static bool wifi_connected_flag = false;
-
 static struct net_if *sta_iface;
-
 static struct wifi_connect_req_params sta_config;
 
 static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint32_t mgmt_event,
@@ -72,7 +67,7 @@ static void wifi_event_handler(struct net_mgmt_event_callback *cb, uint32_t mgmt
 static int connect_to_wifi(void)
 {
 	if (!sta_iface) {
-		LOG_INF("STA: interface no initialized");
+		LOG_INF("STA: interface not initialized");
 		return -EIO;
 	}
 
@@ -95,9 +90,8 @@ static int connect_to_wifi(void)
 	return ret;
 }
 
-void wifi_thread (void) {
-
-    LOG_INF("M5 CORE2 MQTT Client Starting...");
+void wifi_thread(void) {
+    LOG_INF("Disco Board Servo Control Starting...");
 
     // Connect to wifi
     net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler, NET_EVENT_WIFI_MASK);
@@ -112,81 +106,81 @@ void wifi_thread (void) {
     while (!wifi_connected_flag) {
         k_msleep(100);
     }
-    LOG_INF("connected to wifi");
+    LOG_INF("Connected to wifi");
 }
 
 K_THREAD_DEFINE(wifi_thread_id, 956, wifi_thread, NULL, NULL, NULL, 7, 0, 0);
 
 /************************************************************************/
+/* MQTT CONFIGURATION                                                   */
+/************************************************************************/
 
-// --- Commented out JSON parsing block for later use --- //
-/*
-#include <zephyr/data/json.h>
-
-struct Thingy {
-	float temp;
-};
-struct Payload {
-	struct Thingy thingy52[4];
-};
-static const struct json_obj_descr thingy_descr[] = {
-	JSON_OBJ_DESCR_PRIM(struct Thingy, temp, JSON_TOK_NUMBER)
-};
-static const struct json_obj_descr payload_descr[] = {
-	JSON_OBJ_DESCR_OBJ_ARRAY(struct Payload, thingy52, 4, thingy_descr)
-};
-static int parse_temp_json(const char *buf) {
-	struct Payload data;
-	int ret = json_obj_parse_buf(buf, payload_descr, ARRAY_SIZE(payload_descr), &data);
-	if (ret < 0) {
-		LOG_ERR("JSON parse failed: %d", ret);
-		return ret;
-	}
-	for (int i = 0; i < 4; i++) {
-		temps[i] = data.thingy52[i].temp;
-	}
-	return 0;
+/* Parse angle from MQTT payload */
+static int parse_angle_from_payload(const uint8_t *payload, uint32_t len)
+{
+    char angle_str[16];
+    int angle;
+    
+    if (len >= sizeof(angle_str)) {
+        LOG_ERR("Payload too long");
+        return -1;
+    }
+    
+    memcpy(angle_str, payload, len);
+    angle_str[len] = '\0';
+    
+    angle = atoi(angle_str);
+    
+    if (angle < 0 || angle > 180) {
+        LOG_ERR("Invalid angle: %d (must be 0-180)", angle);
+        return -1;
+    }
+    
+    return angle;
 }
-*/
 
-static void process_mqtt_payload(struct mqtt_client *client, const struct mqtt_publish_param *pub_param)
+/* Process servo MQTT commands */
+static void process_servo_mqtt_payload(struct mqtt_client *client, 
+                                     const struct mqtt_publish_param *pub_param)
 {
     if (!client || !pub_param) {
         return;
     }
     
     uint32_t payload_len = pub_param->message.payload.len;
+    uint32_t topic_len = pub_param->message.topic.topic.size;
     
-    if (payload_len == 0) {
+    if (payload_len == 0 || topic_len == 0) {
         return;
     }
     
-    // Create buffer for payload
-    uint8_t payload_buffer[256];
-    uint32_t buffer_size = sizeof(payload_buffer) - 1;
-    uint32_t bytes_to_read = payload_len < buffer_size ? payload_len : buffer_size;
+    // Create buffers for topic and payload
+    uint8_t topic_buffer[64];
+    uint8_t payload_buffer[32];
     
-    // Use mqtt_read_publish_payload to safely read the payload
-    int bytes_read = mqtt_read_publish_payload(client, payload_buffer, bytes_to_read);
+    // Read topic
+    uint32_t topic_bytes_to_read = topic_len < (sizeof(topic_buffer) - 1) ? 
+                                   topic_len : (sizeof(topic_buffer) - 1);
+    memcpy(topic_buffer, pub_param->message.topic.topic.utf8, topic_bytes_to_read);
+    topic_buffer[topic_bytes_to_read] = '\0';
+    
+    // Read payload
+    uint32_t payload_bytes_to_read = payload_len < (sizeof(payload_buffer) - 1) ? 
+                                     payload_len : (sizeof(payload_buffer) - 1);
+    int bytes_read = mqtt_read_publish_payload(client, payload_buffer, payload_bytes_to_read);
     
     if (bytes_read < 0) {
-        LOG_ERR("Failed to read payload: %d", bytes_read);
+        LOG_ERR("Failed to read servo payload: %d", bytes_read);
         return;
     }
     
-    // Null terminate the message
     payload_buffer[bytes_read] = '\0';
-    LOG_INF("Received: %s", payload_buffer);
     
-    // Set flag to update display
-    display_needs_update = true;
-    
-    // Uncomment below to enable JSON parsing
-    /*
-    if (parse_temp_json((const char*)payload_buffer) == 0) {
-        display_needs_update = true;
+    // Parse angle from payload
+    int angle = parse_angle_from_payload(payload_buffer, bytes_read);
+    if (angle < 0) {
+        return;
     }
-    */
 }
 
 static void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt_evt *evt)
@@ -216,8 +210,8 @@ static void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt
             break;
         }
         
-        // Process the received message
-        process_mqtt_payload(client, &evt->param.publish);
+        // Process servo command
+        process_servo_mqtt_payload(client, &evt->param.publish);
         
         // Acknowledge if QoS 1
         if (evt->param.publish.message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
@@ -310,6 +304,31 @@ static int subscribe_to_topic(struct mqtt_client *client, const char *topic)
     return mqtt_subscribe(client, &subs_list);
 }
 
+/* Subscribe to servo control topics */
+static int subscribe_to_servo_topics(struct mqtt_client *client)
+{
+    int ret;
+    
+    /* Subscribe to pan angle topic */
+    ret = subscribe_to_topic(client, MQTT_TOPIC_PAN_ANGLE);
+    if (ret != 0) {
+        LOG_ERR("Failed to subscribe to pan topic: %d", ret);
+        return ret;
+    }
+    
+    /* Subscribe to tilt angle topic */
+    ret = subscribe_to_topic(client, MQTT_TOPIC_TILT_ANGLE);
+    if (ret != 0) {
+        LOG_ERR("Failed to subscribe to tilt topic: %d", ret);
+        return ret;
+    }
+    
+    LOG_INF("Subscribed to servo topics: %s, %s", 
+            MQTT_TOPIC_PAN_ANGLE, MQTT_TOPIC_TILT_ANGLE);
+    
+    return 0;
+}
+
 static void poll_mqtt_client(void)
 {
     int ret;
@@ -341,49 +360,86 @@ static void poll_mqtt_client(void)
     }
 }
 
-// Global persistent buffers for temperature labels
-static char temp_label_buffers[4][16];
+/************************************************************************/
+/* SERVO CONTROL THREAD                                                 */
+/************************************************************************/
 
-static void update_display(void) {
-	// Only update if LVGL objects are created
-	if (!quads[0] || !quad_labels[0]) {
-		LOG_WRN("LVGL objects not ready for display update");
-		return;
-	}
-
-	/* Determine the ranks of each temp */
-	int rank[4] = {0};
-	for (int i = 0; i < 4; i++) {
-		for (int j = 0; j < 4; j++) {
-			if (temps[i] > temps[j]) rank[i]++;
-		}
-	}
-
-	/* Define relative colors */
-	lv_color_t color_map[4] = {
-		lv_color_make(255, 0, 0),     // coldest (blue)
-		lv_color_make(0, 0, 255),     // mid-cold (cyan)
-		lv_color_make(0, 255, 255),   // mid-warm (yellow)
-		lv_color_hex(0x00FF00)        // hottest (red)
-	};
-
-	/* Apply color + label */
-	for (int i = 0; i < 4; i++) {
-        lv_color_t col = color_map[rank[i]];
-        lv_obj_set_style_bg_color(quads[i], col, 0);
-
-        // Use global persistent buffers and ensure proper formatting
-        snprintf(temp_label_buffers[i], sizeof(temp_label_buffers[i]), "%d°C", (int)temps[i]);
-        lv_label_set_text(quad_labels[i], temp_label_buffers[i]);
+/* Servo control thread */
+void servo_control_thread(void)
+{
+    int ret;
+    int local_pan_angle, local_tilt_angle;
+    bool angles_changed;
+    
+    LOG_INF("Starting servo control thread");
+    
+    /* Wait for WiFi connection */
+    while (!wifi_connected_flag) {
+        k_msleep(100);
+    }
+    
+    /* Initialize servo PWM */
+    ret = init_servo_pwm();
+    if (ret < 0) {
+        LOG_ERR("Failed to initialize servo PWM: %d", ret);
+        return;
+    }
+    
+    /* Wait for MQTT connection */
+    while (!connected) {
+        k_msleep(100);
+    }
+    
+    /* Subscribe to servo topics */
+    ret = subscribe_to_servo_topics(&client_ctx);
+    if (ret != 0) {
+        LOG_ERR("Failed to subscribe to servo topics");
+        return;
+    }
+    
+    LOG_INF("Servo control ready. Listening for angle commands...");
+    
+    /* Main servo control loop */
+    while (1) {
+        /* Check for angle updates */
+        k_mutex_lock(&servo_angle_mutex, K_FOREVER);
+        angles_changed = servo_angles_updated;
+        if (angles_changed) {
+            local_pan_angle = current_pan_angle;
+            local_tilt_angle = current_tilt_angle;
+            servo_angles_updated = false;
+        }
+        k_mutex_unlock(&servo_angle_mutex);
         
-        LOG_DBG("Updated quad %d: temp=%d, rank=%d, label=%s", i, (int)temps[i], rank[i], temp_label_buffers[i]);
+        /* Update servo positions if angles changed */
+        if (angles_changed) {
+            ret = set_servo_position(&pwm_servo_pan, local_pan_angle);
+            if (ret < 0) {
+                LOG_ERR("Failed to set pan servo position: %d", ret);
+            }
+            
+            ret = set_servo_position(&pwm_servo_tilt, local_tilt_angle);
+            if (ret < 0) {
+                LOG_ERR("Failed to set tilt servo position: %d", ret);
+            }
+            
+            LOG_INF("Servos updated - Pan: %d°, Tilt: %d°", 
+                    local_pan_angle, local_tilt_angle);
+        }
+        
+        k_msleep(50);  // 50ms update rate for servo control
     }
 }
 
-// Combined MQTT + LVGL thread
-void mqtt_lvgl_thread(void) {
+/* Create servo control thread */
+K_THREAD_DEFINE(servo_thread_id, 1024, servo_control_thread, NULL, NULL, NULL, 6, 0, 0);
+
+/************************************************************************/
+/* MQTT THREAD                                                          */
+/************************************************************************/
+
+void mqtt_thread(void) {
     bool mqtt_initialized = false;
-    bool lvgl_initialized = false;
     
     /* Wait for wifi connection */
     while (!wifi_connected_flag) {
@@ -414,75 +470,12 @@ void mqtt_lvgl_thread(void) {
         k_msleep(10);
     }
     mqtt_initialized = true;
-
-    /* Subscribe to temperature topic */
-    LOG_INF("Subscribing to topic: %s", MQTT_TOPIC_SUB);
-    ret = subscribe_to_topic(&client_ctx, MQTT_TOPIC_SUB);
-    if (ret != 0) {
-        LOG_ERR("Failed to subscribe: %d", ret);
-    } else {
-        LOG_INF("Subscription request sent successfully");
-    }
-
-    /* Initialize LVGL */
-    LOG_INF("Initializing LVGL");
     
-    // Verify display device is available
-    if (!display_dev || !device_is_ready(display_dev)) {
-        LOG_ERR("Display device not ready");
-        return;
-    }
+    LOG_INF("MQTT setup complete. Starting main loop...");
+    LOG_INF("Listening for servo commands on topics: %s, %s", 
+            MQTT_TOPIC_PAN_ANGLE, MQTT_TOPIC_TILT_ANGLE);
 
-    lv_init();
-    LOG_INF("LVGL initialized successfully");
-
-    lv_obj_t *scr = lv_scr_act();
-    lv_coord_t sw = lv_obj_get_width(scr);
-    lv_coord_t sh = lv_obj_get_height(scr);
-
-    // Initialize all quad objects to NULL first
-    for (int i = 0; i < 4; i++) {
-        quads[i] = NULL;
-        quad_labels[i] = NULL;
-    }
-
-    for (int i = 0; i < 4; i++) {
-        quads[i] = lv_obj_create(scr);
-        lv_obj_set_size(quads[i], sw / 2, sh / 2);
-        lv_obj_clear_flag(quads[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_border_width(quads[i], 1, 0);
-        lv_obj_set_style_radius(quads[i], 0, 0);
-        lv_obj_set_style_border_color(quads[i], lv_color_black(), 0);
-
-        // Correct position based on index
-        lv_obj_set_pos(quads[i],
-                    (i % 2) * (sw / 2),
-                    (i / 2) * (sh / 2));
-
-        quad_labels[i] = lv_label_create(quads[i]);
-        lv_obj_center(quad_labels[i]);
-        lv_obj_set_style_text_color(quad_labels[i], lv_color_white(), 0);
-        lv_obj_set_style_text_font(quad_labels[i], &lv_font_montserrat_28, 0);
-        
-        // Initialize with placeholder text first
-        lv_label_set_text(quad_labels[i], "Loading...");
-        
-        LOG_INF("Created quad %d at position (%d, %d)", i, (i % 2) * (sw / 2), (i / 2) * (sh / 2));
-    }
-
-    // Small delay to ensure LVGL objects are fully created
-    k_msleep(50);
-    
-    LOG_INF("Initial temperatures: %d, %d, %d, %d", 
-            (int)temps[0], (int)temps[1], (int)temps[2], (int)temps[3]);
-    
-    update_display(); // draw initial temps
-    lvgl_initialized = true;
-    
-    LOG_INF("MQTT and LVGL setup complete. Starting main loop...");
-    LOG_INF("Listening for temperature messages on topic: %s", MQTT_TOPIC_SUB);
-
-    /* Main combined loop */
+    /* Main MQTT loop */
     while (1) {
         // Handle MQTT
         if (mqtt_initialized) {
@@ -492,33 +485,17 @@ void mqtt_lvgl_thread(void) {
             }
         }
         
-        // Handle LVGL
-        if (lvgl_initialized) {
-            lv_timer_handler();
-            
-            // Update display if new data received
-            if (display_needs_update) {
-                update_display();
-                display_needs_update = false;
-            }
-        }
-        
         k_msleep(10);  // Short sleep to balance responsiveness
     }
 }
 
+K_THREAD_DEFINE(mqtt_thread_id, 1024*3, mqtt_thread, NULL, NULL, NULL, 7, 0, 0);
+
+/************************************************************************/
+/* MAIN FUNCTION                                                        */
+/************************************************************************/
+
 int main(void) {
-	LOG_INF("Starting M5 Core2 application");
-	
-	display_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
-	if (!device_is_ready(display_dev)) {
-		LOG_ERR("Display not ready");
-		return -1;
-	}
-	display_blanking_off(display_dev);
-	
-	LOG_INF("Display initialized, starting threads");
+	LOG_INF("Starting Disco Board Servo Control Application");
 	return 0;
 }
-
-K_THREAD_DEFINE(mqtt_lvgl_thread_id, 1024*3, mqtt_lvgl_thread, NULL, NULL, NULL, 7, 0, 0);

@@ -1,0 +1,10 @@
+/* Define a PWM servo device using pwm2 channel 1 */
+&pwm2 {
+    servo: servo {
+        compatible = "pwm-servo";
+        pwms = <&pwm2 1 PWM_MSEC(20) PWM_POLARITY_NORMAL>; /* Channel 1, 20ms period (50Hz) */
+        min-pulse = <PWM_USEC(1000)>;
+        max-pulse = <PWM_USEC(20500)>;
+        label = "servo";
+    };
+};
