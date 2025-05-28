@@ -130,8 +130,9 @@ void pack_sensor_data_to_beacon(void) {
     
     // Pack sensor data into the LOWEST bytes of UUID (bytes 12-15)
     // This keeps the higher bytes cleaner for identification
-    beacon_uuid[12] = (current_sensor_data.temperature >> 8) & 0xFF;  // Temp high
-    beacon_uuid[13] = current_sensor_data.temperature & 0xFF;         // Temp low
+    beacon_uuid[12] = current_sensor_data.temperature >> 8;         // 0x09
+    beacon_uuid[13] = current_sensor_data.temperature & 0xFF;       // 0x60
+
     beacon_uuid[14] = current_sensor_data.humidity;                   // Humidity
     beacon_uuid[15] = current_sensor_data.data_valid ? 0x01 : 0x00;   // Data validity flag
     
@@ -140,12 +141,12 @@ void pack_sensor_data_to_beacon(void) {
     
     // Pack remaining sensor data into Major/Minor fields (4 bytes total)
     // Major (2 bytes): Pressure data
-    ibeacon_data[25] = (current_sensor_data.pressure >> 8) & 0xFF;  // Pressure high
+    ibeacon_data[25] = (current_sensor_data.pressure >> 8);  // Pressure high
     ibeacon_data[26] = current_sensor_data.pressure & 0xFF;         // Pressure low
     
     // Minor (2 bytes): Air quality data  
-    ibeacon_data[27] = current_sensor_data.tvoc;                    // TVOC
-    ibeacon_data[28] = (current_sensor_data.co2 >> 8) & 0xFF;      // CO2 high byte only (0-255 * 256 range)
+    ibeacon_data[27] = (current_sensor_data.co2 >> 8);                    // TVOC
+    ibeacon_data[28] = (current_sensor_data.co2 & 0xFF);      // CO2 high byte only (0-255 * 256 range)
     
     k_mutex_unlock(&sensor_data_mutex);
 }
@@ -155,7 +156,7 @@ bool validate_sensor_reading(double temp, double humidity, double pressure) {
     // Basic sanity checks for sensor readings
     if (temp < -40.0 || temp > 85.0) return false;        // Temperature range
     if (humidity < 0.0 || humidity > 100.0) return false;  // Humidity range
-    if (pressure < 300.0 || pressure > 1200.0) return false; // Pressure range (hPa)
+    if (pressure < 50.0 || pressure > 1200.0) return false; // Pressure range (hPa)
     return true;
 }
 
@@ -202,12 +203,11 @@ void sensor_thread(void) {
                 sensor_channel_get(lps22hb, SENSOR_CHAN_PRESS, &pressure);
                 
                 double press_pa = sensor_value_to_double(&pressure);
-                double press_hpa = press_pa / 100.0; // Convert Pa to hPa
-                
+
                 // Validate pressure reading (reasonable atmospheric pressure range)
-                if (press_hpa >= 300.0 && press_hpa <= 1200.0) {
+                if (press_pa >= 50.0 && press_pa <= 1200.0) {
                     // Scale and store: pressure * 10 (1013.25 hPa = 10132)
-                    current_sensor_data.pressure = (uint16_t)(press_hpa * 10);
+                    current_sensor_data.pressure = (uint16_t)(press_pa * 10);
                     sensor_updated = true;
                     reading_valid = true;
                     
@@ -231,7 +231,7 @@ void sensor_thread(void) {
                 
                 double tvoc_val = sensor_value_to_double(&tvoc);
                 double co2_val = sensor_value_to_double(&co2);
-                
+
                 // Basic validation for air quality readings
                 if (tvoc_val >= 0 && co2_val >= 400 && co2_val <= 8192) {
                     // Scale TVOC to fit in uint8_t (divide by 10, cap at 255)
@@ -299,6 +299,7 @@ void bt_update_thread(void) {
             }
             k_msleep(500); // Wait longer on error
         } else {
+            printk("Sent\n");
             retry_count = 0; // Reset on success
             k_msleep(250); // Update advertising data every 250ms
         }
