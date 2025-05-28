@@ -1,0 +1,9 @@
+// sensor_packet.proto  →  run protoc with --nanopb_out=.
+syntax = "proto3";
+message SensorData {
+  uint32 sensor_id     = 1;   // 1–4
+  float  temperature   = 3;
+  float  humidity_pct  = 4;
+  float  pressure_hpa  = 5;
+  uint32 co2_ppm       = 6;
+}
