@@ -706,4 +706,8 @@
 		regulator-name = "bus_5v";
 		enable-gpios = < &axp192_gpio 0x5 0x0 >;
 	};
+	wifi_ap: wifi_ap {
+		compatible = "espressif,esp32-wifi";
+		status = "okay";
+	};
 };

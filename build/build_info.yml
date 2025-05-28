@@ -13,6 +13,7 @@ cmake:
      - /Users/jakerussell/Documents/csse4011/zephyr/dts/bindings
     files:
      - /Users/jakerussell/Documents/csse4011/zephyr/boards/m5stack/m5stack_core2/m5stack_core2_procpu.dts
+     - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.overlay
     include-dirs:
      - /Users/jakerussell/Documents/csse4011/modules/hal/atmel/include
      - /Users/jakerussell/Documents/csse4011/modules/hal/gigadevice/include
@@ -34,12 +35,16 @@ cmake:
      - /Users/jakerussell/Documents/csse4011/zephyr/dts/arm
      - /Users/jakerussell/Documents/csse4011/zephyr/dts/arc
      - /Users/jakerussell/Documents/csse4011/zephyr/dts
+    user-files:
+     - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.overlay
   kconfig:
     files:
      - /Users/jakerussell/Documents/csse4011/zephyr/boards/m5stack/m5stack_core2/m5stack_core2_procpu_defconfig
      - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/prj.conf
+     - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.conf
     user-files:
      - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/prj.conf
+     - /Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.conf
   toolchain:
     name: zephyr
     path: /Users/jakerussell/zephyr_install/zephyr-sdk-0.17.0

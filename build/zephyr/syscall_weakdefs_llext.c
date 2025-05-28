@@ -141,6 +141,7 @@ extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_log_panic;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_log_process;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_addr_ntop;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_addr_pton;
+extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_eth_get_ptp_clock_by_index;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_get_by_index;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_ipv4_addr_add_by_index;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_ipv4_addr_lookup_by_index;
@@ -151,6 +152,8 @@ extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_ipv4_set_netm
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_ipv6_addr_add_by_index;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_ipv6_addr_lookup_by_index;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_net_if_ipv6_addr_rm_by_index;
+extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_spi_release;
+extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_spi_transceive;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_sys_clock_hw_cycles_per_sec_runtime_get;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_sys_csrand_get;
 extern __weak ALIAS_OF(no_syscall_impl) void * const z_impl_sys_rand_get;

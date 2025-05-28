@@ -29,7 +29,7 @@ static bool connected = false;
 
 static lv_obj_t *quads[4];
 static lv_obj_t *quad_labels[4];
-static float temps[4] = {29.3, 32.4, 26.3, 3.7}; // Initial values
+static float temps[4] = {29.3, 32.4, 29.3, 3.7}; // Initial values
 static bool display_needs_update = false;
 
 // Global display device
@@ -120,7 +120,7 @@ K_THREAD_DEFINE(wifi_thread_id, 956, wifi_thread, NULL, NULL, NULL, 7, 0, 0);
 /************************************************************************/
 
 // --- Commented out JSON parsing block for later use --- //
-/*
+
 #include <zephyr/data/json.h>
 
 struct Thingy {
@@ -147,7 +147,7 @@ static int parse_temp_json(const char *buf) {
 	}
 	return 0;
 }
-*/
+
 
 static void process_mqtt_payload(struct mqtt_client *client, const struct mqtt_publish_param *pub_param)
 {
@@ -182,11 +182,11 @@ static void process_mqtt_payload(struct mqtt_client *client, const struct mqtt_p
     display_needs_update = true;
     
     // Uncomment below to enable JSON parsing
-    /*
+    
     if (parse_temp_json((const char*)payload_buffer) == 0) {
         display_needs_update = true;
     }
-    */
+    
 }
 
 static void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt_evt *evt)

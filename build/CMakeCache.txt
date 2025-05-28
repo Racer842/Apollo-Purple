@@ -315,7 +315,7 @@ CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 // listed, e.g. CONF_FILE="prj1.conf;prj2.conf" The CACHED_CONF_FILE
 // is internal Zephyr variable used between CMake runs. To change
 // CONF_FILE, use the CONF_FILE variable.
-CONF_FILE:STRING=/Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/prj.conf
+CONF_FILE:STRING=/Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/prj.conf;/Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.conf
 
 //Path to a program.
 DTC:FILEPATH=/opt/homebrew/bin/dtc
@@ -325,7 +325,7 @@ DTC:FILEPATH=/opt/homebrew/bin/dtc
 // parameter. These settings will override the settings in the
 // board's .dts file. Multiple files may be listed, e.g. DTC_OVERLAY_FILE="dts1.overlay
 // dts2.overlay"
-DTC_OVERLAY_FILE:STRING=
+DTC_OVERLAY_FILE:STRING=/Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.overlay
 
 //Linker BFD compatibility (compiler reported)
 GNULD_LINKER_IS_BFD:BOOL=ON
@@ -539,7 +539,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=162
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=174
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP

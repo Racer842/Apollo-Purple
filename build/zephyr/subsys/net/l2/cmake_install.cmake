@@ -39,6 +39,11 @@ endif()
 
 if(NOT CMAKE_INSTALL_LOCAL_ONLY)
   # Include the install script for the subdirectory.
+  include("/Users/jakerussell/Documents/csse4011/Apollo-Purple/build/zephyr/subsys/net/l2/ethernet/cmake_install.cmake")
+endif()
+
+if(NOT CMAKE_INSTALL_LOCAL_ONLY)
+  # Include the install script for the subdirectory.
   include("/Users/jakerussell/Documents/csse4011/Apollo-Purple/build/zephyr/subsys/net/l2/wifi/cmake_install.cmake")
 endif()
 

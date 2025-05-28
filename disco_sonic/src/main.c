@@ -4,31 +4,233 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/wifi_mgmt.h>
 #include <zephyr/logging/log.h>
-#include <zephyr/drivers/pwm.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
 #include <zephyr/random/random.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 
-LOG_MODULE_REGISTER(disco_servo, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(disco_ultrasonic, LOG_LEVEL_INF);
 
 #define WIFI_SSID "Jake_iphone"
 #define WIFI_PSK  "bbbooooo"
 
 #define MQTT_BROKER_ADDR "172.20.10.11"
 #define MQTT_BROKER_PORT 1883
-#define MQTT_CLIENT_ID "disco_servo_control"
+#define MQTT_CLIENT_ID "disco_ultrasonic_node"
 
-/* MQTT Topics for Servo Control */
-#define MQTT_TOPIC_PAN_ANGLE   "servo/pan/angle"
-#define MQTT_TOPIC_TILT_ANGLE  "servo/tilt/angle"
+/* MQTT Topics for Pump Control */
+#define MQTT_TOPIC_PUMP_CONTROL "pump/activate"
 
 static struct mqtt_client client_ctx;
-static uint8_t rx_buffer[128], tx_buffer[128];
+static uint8_t rx_buffer[256], tx_buffer[256];
 static struct sockaddr_storage broker;
 static struct zsock_pollfd fds[1];
 static int nfds;
 static bool connected = false;
+
+/************************************************************************/
+/* PUMP CONTROL CONFIGURATION                                           */
+/************************************************************************/
+
+/* Pump control GPIO pin */
+#define PUMP_CONTROL_PIN 2  // Using pin 6 for pump control
+
+/* Global variables for pump control */
+static bool pump_active = false;
+static struct k_mutex pump_mutex;
+
+static const struct device *trig_port = DEVICE_DT_GET(DT_NODELABEL(gpioc));
+static const struct device *echo_port = DEVICE_DT_GET(DT_NODELABEL(gpioc));
+
+/* Ultrasonic sensor pins */
+#define ULTRASONIC1_TRIG_PIN 5
+#define ULTRASONIC1_ECHO_PIN 4
+
+/* Configuration */
+#define ULTRASONIC_TIMEOUT_USEC 500000 /* Maximum timeout for echo pulse (25ms) */
+#define MEASUREMENT_INTERVAL_MS 1000   /* Time between measurements in ms */
+#define SOUND_SPEED_MPS 343           /* Speed of sound in m/s at room temp */
+
+/* Global variables for ultrasonic */
+static struct gpio_callback echo1_cb_data;
+static uint32_t echo1_start_time;
+static uint32_t echo1_pulse_duration;
+static volatile bool echo1_received = false;
+static uint16_t distance1_mm = 0;
+static struct k_mutex distance_mutex;
+
+/************************************************************************/
+/* BLUETOOTH LE IBEACON CONFIGURATION                                   */
+/************************************************************************/
+
+#define IBEACON_PREFIX_LEN 9
+#define IBEACON_UUID_LEN 16
+#define IBEACON_PAYLOAD_LEN 30
+
+static const uint8_t beacon_uuid[16] = {
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xF2, 0xF2,
+};
+
+/* Reusable function to update and advertise distance as iBeacon */
+static void advertise_distance(uint16_t distance_mm)
+{
+    uint8_t adv_data[IBEACON_PAYLOAD_LEN] = {
+        0x02, 0x01, 0x06,                         // Flags
+        0x1A, 0xFF,                               // Length, Manufacturer Specific
+        0x4C, 0x00,                               // Apple Company ID
+        0x02, 0x15                                // iBeacon type and length
+    };
+
+    memcpy(&adv_data[9], beacon_uuid, IBEACON_UUID_LEN);
+
+    adv_data[25] = (distance_mm >> 8) & 0xFF;     // Major (high byte)
+    adv_data[26] = distance_mm & 0xFF;            // Major (low byte)
+
+    adv_data[27] = 0x00;                          // Minor high byte (set to 0)
+    adv_data[28] = 0x01;                          // Minor low byte
+
+    adv_data[29] = 0xC5;                          // Measured Power
+
+    struct bt_data ad[] = {
+        BT_DATA_BYTES(BT_DATA_FLAGS, BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR),
+        BT_DATA(BT_DATA_MANUFACTURER_DATA, &adv_data[5], 25)
+    };
+
+    struct bt_le_adv_param adv_param = {
+        .id = BT_ID_DEFAULT,
+        .sid = 0,
+        .secondary_max_skip = 0,
+        .options = BT_LE_ADV_OPT_USE_NAME,
+        .interval_min = 0x00A0,
+        .interval_max = 0x00A0,
+        .peer = NULL
+    };
+
+    bt_le_adv_stop();
+    int err = bt_le_adv_start(&adv_param, ad, ARRAY_SIZE(ad), NULL, 0);
+    if (err) {
+        LOG_ERR("iBeacon adv start failed (err %d)", err);
+    } else {
+        // LOG_INF("iBeacon advertising distance: %u mm", distance_mm);
+    }
+}
+
+/************************************************************************/
+/* ULTRASONIC SENSOR FUNCTIONS                                          */
+/************************************************************************/
+
+/* Echo pin interrupt handler for sensor 1 */
+static void echo1_handler(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+    int val = gpio_pin_get(echo_port, ULTRASONIC1_ECHO_PIN);
+    
+    if (val > 0) {
+        /* Rising edge - start timing */
+        echo1_start_time = k_cycle_get_32();
+    } else {
+        /* Falling edge - end timing and calculate duration */
+        uint32_t end_time = k_cycle_get_32();
+        echo1_pulse_duration = k_cyc_to_us_floor32(end_time - echo1_start_time);
+        echo1_received = true;
+    }
+}
+
+/* Calculate distance from pulse duration */
+static uint16_t calculate_distance_mm(uint32_t pulse_duration_us)
+{
+    /* Distance = (Time × Speed of Sound) ÷ 2
+     * Time is in microseconds, speed of sound is in meters per second
+     * Convert to millimeters: multiply by 1000
+     * Result: Distance (mm) = (Time (us) × Speed (m/s) × 1000) ÷ (2 × 1000000)
+     * Simplified: Distance (mm) = (Time (us) × Speed (m/s)) ÷ 2000
+     */
+    if (pulse_duration_us > ULTRASONIC_TIMEOUT_USEC) {
+        return 0; // Error or out of range
+    }
+    
+    return (pulse_duration_us * SOUND_SPEED_MPS) / 2000;
+}
+
+/* Trigger ultrasonic measurement for sensor 1 */
+static void trigger_sensor1(void)
+{
+    echo1_received = false;
+    
+    /* Send 10us pulse to trigger pin */
+    gpio_pin_set(trig_port, ULTRASONIC1_TRIG_PIN, 1);
+    k_busy_wait(10);
+    gpio_pin_set(trig_port, ULTRASONIC1_TRIG_PIN, 0);
+    
+    /* Wait for echo with timeout */
+    k_busy_wait(2); // Short delay to ensure trigger pulse is completed
+    uint32_t start_wait = k_uptime_get_32();
+    while (!echo1_received) {
+        if (k_uptime_get_32() - start_wait > ULTRASONIC_TIMEOUT_USEC / 1000) {
+            LOG_WRN("Sensor 1 timeout");
+            break;
+        }
+        k_msleep(1);
+    }
+    
+    if (echo1_received) {
+        uint16_t new_distance = calculate_distance_mm(echo1_pulse_duration);
+        
+        k_mutex_lock(&distance_mutex, K_FOREVER);
+        distance1_mm = new_distance;
+        k_mutex_unlock(&distance_mutex);
+        
+        // LOG_INF("Sensor 1 distance: %u mm", distance1_mm);
+    }
+}
+
+/* Initialize GPIO for pump control */
+static int init_pump_gpio(void)
+{
+    if (!device_is_ready(trig_port)) { // Reusing the same GPIO port
+        LOG_ERR("GPIO port not ready for pump control");
+        return -ENODEV;
+    }
+
+    gpio_pin_configure(trig_port, PUMP_CONTROL_PIN, GPIO_OUTPUT);
+    gpio_pin_set(trig_port, PUMP_CONTROL_PIN, 0); // Start with pump off
+    
+    LOG_INF("Pump control GPIO initialized on pin %d", PUMP_CONTROL_PIN);
+    return 0;
+}
+
+/* Set pump state */
+static void set_pump_state(bool active)
+{
+    k_mutex_lock(&pump_mutex, K_FOREVER);
+    pump_active = active;
+    k_mutex_unlock(&pump_mutex);
+    
+    gpio_pin_set(trig_port, PUMP_CONTROL_PIN, active ? 1 : 0);
+    LOG_INF("Pump %s", active ? "ACTIVATED" : "DEACTIVATED");
+}
+static int init_ultrasonic_gpio(void)
+{
+    if (!device_is_ready(trig_port) || !device_is_ready(echo_port)) {
+        LOG_ERR("GPIO ports not ready");
+        return -ENODEV;
+    }
+
+    gpio_pin_configure(trig_port, ULTRASONIC1_TRIG_PIN, GPIO_OUTPUT);
+    gpio_pin_configure(echo_port, ULTRASONIC1_ECHO_PIN, GPIO_INPUT);
+    
+    gpio_pin_interrupt_configure(echo_port, ULTRASONIC1_ECHO_PIN, GPIO_INT_EDGE_BOTH);
+
+    /* Configure interrupt for echo pin 1 */
+    gpio_init_callback(&echo1_cb_data, echo1_handler, BIT(ULTRASONIC1_ECHO_PIN));
+    gpio_add_callback(echo_port, &echo1_cb_data);
+    
+    return 0;
+}
 
 /************************************************************************/
 /* WIFI CONFIGURATION                                                   */
@@ -91,7 +293,7 @@ static int connect_to_wifi(void)
 }
 
 void wifi_thread(void) {
-    LOG_INF("Disco Board Servo Control Starting...");
+    LOG_INF("Disco Board Ultrasonic Node Starting...");
 
     // Connect to wifi
     net_mgmt_init_event_callback(&wifi_cb, wifi_event_handler, NET_EVENT_WIFI_MASK);
@@ -115,33 +317,39 @@ K_THREAD_DEFINE(wifi_thread_id, 956, wifi_thread, NULL, NULL, NULL, 7, 0, 0);
 /* MQTT CONFIGURATION                                                   */
 /************************************************************************/
 
-/* Parse angle from MQTT payload */
-static int parse_angle_from_payload(const uint8_t *payload, uint32_t len)
+/* Parse pump command from MQTT payload */
+static bool parse_pump_command_from_payload(const uint8_t *payload, uint32_t len)
 {
-    char angle_str[16];
-    int angle;
+    char command_str[16];
     
-    if (len >= sizeof(angle_str)) {
+    if (len >= sizeof(command_str)) {
         LOG_ERR("Payload too long");
-        return -1;
+        return false;
     }
     
-    memcpy(angle_str, payload, len);
-    angle_str[len] = '\0';
+    memcpy(command_str, payload, len);
+    command_str[len] = '\0';
     
-    angle = atoi(angle_str);
-    
-    if (angle < 0 || angle > 180) {
-        LOG_ERR("Invalid angle: %d (must be 0-180)", angle);
-        return -1;
+    // Convert to lowercase for comparison
+    for (int i = 0; command_str[i]; i++) {
+        command_str[i] = tolower(command_str[i]);
     }
     
-    return angle;
+    if (strcmp(command_str, "on") == 0 || strcmp(command_str, "1") == 0 || 
+        strcmp(command_str, "true") == 0 || strcmp(command_str, "activate") == 0) {
+        return true;
+    } else if (strcmp(command_str, "off") == 0 || strcmp(command_str, "0") == 0 || 
+               strcmp(command_str, "false") == 0 || strcmp(command_str, "deactivate") == 0) {
+        return false;
+    }
+    
+    LOG_WRN("Unknown pump command: %s", command_str);
+    return false;
 }
 
-/* Process servo MQTT commands */
-static void process_servo_mqtt_payload(struct mqtt_client *client, 
-                                     const struct mqtt_publish_param *pub_param)
+/* Process pump MQTT commands */
+static void process_pump_mqtt_payload(struct mqtt_client *client, 
+                                    const struct mqtt_publish_param *pub_param)
 {
     if (!client || !pub_param) {
         return;
@@ -170,16 +378,18 @@ static void process_servo_mqtt_payload(struct mqtt_client *client,
     int bytes_read = mqtt_read_publish_payload(client, payload_buffer, payload_bytes_to_read);
     
     if (bytes_read < 0) {
-        LOG_ERR("Failed to read servo payload: %d", bytes_read);
+        LOG_ERR("Failed to read pump payload: %d", bytes_read);
         return;
     }
     
     payload_buffer[bytes_read] = '\0';
     
-    // Parse angle from payload
-    int angle = parse_angle_from_payload(payload_buffer, bytes_read);
-    if (angle < 0) {
-        return;
+    // Check if this is the pump control topic
+    if (strcmp((char*)topic_buffer, MQTT_TOPIC_PUMP_CONTROL) == 0) {
+        bool pump_command = parse_pump_command_from_payload(payload_buffer, bytes_read);
+        set_pump_state(pump_command);
+        LOG_INF("Received pump command: %s -> %s", 
+                payload_buffer, pump_command ? "ON" : "OFF");
     }
 }
 
@@ -210,8 +420,8 @@ static void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt
             break;
         }
         
-        // Process servo command
-        process_servo_mqtt_payload(client, &evt->param.publish);
+        // Process pump command
+        process_pump_mqtt_payload(client, &evt->param.publish);
         
         // Acknowledge if QoS 1
         if (evt->param.publish.message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
@@ -288,45 +498,26 @@ static void client_init(struct mqtt_client *client)
     client->transport.type = MQTT_TRANSPORT_NON_SECURE;
 }
 
-static int subscribe_to_topic(struct mqtt_client *client, const char *topic)
+/* Subscribe to pump control topic */
+static int subscribe_to_pump_topic(struct mqtt_client *client)
 {
     struct mqtt_topic subs_topic;
     struct mqtt_subscription_list subs_list;
 
-    subs_topic.topic.utf8 = (uint8_t *)topic;
-    subs_topic.topic.size = strlen(topic);
+    subs_topic.topic.utf8 = (uint8_t *)MQTT_TOPIC_PUMP_CONTROL;
+    subs_topic.topic.size = strlen(MQTT_TOPIC_PUMP_CONTROL);
     subs_topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
 
     subs_list.list = &subs_topic;
     subs_list.list_count = 1U;
     subs_list.message_id = sys_rand32_get();
 
-    return mqtt_subscribe(client, &subs_list);
-}
-
-/* Subscribe to servo control topics */
-static int subscribe_to_servo_topics(struct mqtt_client *client)
-{
-    int ret;
-    
-    /* Subscribe to pan angle topic */
-    ret = subscribe_to_topic(client, MQTT_TOPIC_PAN_ANGLE);
-    if (ret != 0) {
-        LOG_ERR("Failed to subscribe to pan topic: %d", ret);
-        return ret;
+    int ret = mqtt_subscribe(client, &subs_list);
+    if (ret == 0) {
+        LOG_INF("Subscribed to pump control topic: %s", MQTT_TOPIC_PUMP_CONTROL);
     }
     
-    /* Subscribe to tilt angle topic */
-    ret = subscribe_to_topic(client, MQTT_TOPIC_TILT_ANGLE);
-    if (ret != 0) {
-        LOG_ERR("Failed to subscribe to tilt topic: %d", ret);
-        return ret;
-    }
-    
-    LOG_INF("Subscribed to servo topics: %s, %s", 
-            MQTT_TOPIC_PAN_ANGLE, MQTT_TOPIC_TILT_ANGLE);
-    
-    return 0;
+    return ret;
 }
 
 static void poll_mqtt_client(void)
@@ -361,78 +552,60 @@ static void poll_mqtt_client(void)
 }
 
 /************************************************************************/
-/* SERVO CONTROL THREAD                                                 */
+/* ULTRASONIC SENSOR THREAD                                             */
 /************************************************************************/
 
-/* Servo control thread */
-void servo_control_thread(void)
+/* Ultrasonic sensor reading thread */
+void ultrasonic_thread(void)
 {
     int ret;
-    int local_pan_angle, local_tilt_angle;
-    bool angles_changed;
+    uint16_t local_distance;
     
-    LOG_INF("Starting servo control thread");
+    LOG_INF("Starting ultrasonic sensor thread");
     
-    /* Wait for WiFi connection */
-    while (!wifi_connected_flag) {
-        k_msleep(100);
-    }
-    
-    /* Initialize servo PWM */
-    ret = init_servo_pwm();
+    /* Initialize ultrasonic GPIO */
+    ret = init_ultrasonic_gpio();
     if (ret < 0) {
-        LOG_ERR("Failed to initialize servo PWM: %d", ret);
+        LOG_ERR("Failed to initialize ultrasonic GPIO: %d", ret);
         return;
     }
     
-    /* Wait for MQTT connection */
-    while (!connected) {
-        k_msleep(100);
-    }
-    
-    /* Subscribe to servo topics */
-    ret = subscribe_to_servo_topics(&client_ctx);
-    if (ret != 0) {
-        LOG_ERR("Failed to subscribe to servo topics");
+    /* Initialize pump control GPIO */
+    ret = init_pump_gpio();
+    if (ret < 0) {
+        LOG_ERR("Failed to initialize pump GPIO: %d", ret);
         return;
     }
     
-    LOG_INF("Servo control ready. Listening for angle commands...");
+    /* Initialize Bluetooth */
+    ret = bt_enable(NULL);
+    if (ret) {
+        LOG_ERR("Bluetooth init failed (err %d)", ret);
+        return;
+    }
+    LOG_INF("Bluetooth initialized");
     
-    /* Main servo control loop */
+    LOG_INF("Ultrasonic sensor ready. Starting measurements...");
+    
+    /* Main ultrasonic reading loop */
     while (1) {
-        /* Check for angle updates */
-        k_mutex_lock(&servo_angle_mutex, K_FOREVER);
-        angles_changed = servo_angles_updated;
-        if (angles_changed) {
-            local_pan_angle = current_pan_angle;
-            local_tilt_angle = current_tilt_angle;
-            servo_angles_updated = false;
-        }
-        k_mutex_unlock(&servo_angle_mutex);
+        /* Trigger sensor measurement */
+        trigger_sensor1();
         
-        /* Update servo positions if angles changed */
-        if (angles_changed) {
-            ret = set_servo_position(&pwm_servo_pan, local_pan_angle);
-            if (ret < 0) {
-                LOG_ERR("Failed to set pan servo position: %d", ret);
-            }
-            
-            ret = set_servo_position(&pwm_servo_tilt, local_tilt_angle);
-            if (ret < 0) {
-                LOG_ERR("Failed to set tilt servo position: %d", ret);
-            }
-            
-            LOG_INF("Servos updated - Pan: %d°, Tilt: %d°", 
-                    local_pan_angle, local_tilt_angle);
-        }
+        /* Get current distance reading */
+        k_mutex_lock(&distance_mutex, K_FOREVER);
+        local_distance = distance1_mm;
+        k_mutex_unlock(&distance_mutex);
         
-        k_msleep(50);  // 50ms update rate for servo control
+        /* Advertise distance via BLE iBeacon */
+        advertise_distance(local_distance);
+        
+        k_msleep(MEASUREMENT_INTERVAL_MS);
     }
 }
 
-/* Create servo control thread */
-K_THREAD_DEFINE(servo_thread_id, 1024, servo_control_thread, NULL, NULL, NULL, 6, 0, 0);
+/* Create ultrasonic sensor thread */
+K_THREAD_DEFINE(ultrasonic_thread_id, 1024, ultrasonic_thread, NULL, NULL, NULL, 6, 0, 0);
 
 /************************************************************************/
 /* MQTT THREAD                                                          */
@@ -472,8 +645,13 @@ void mqtt_thread(void) {
     mqtt_initialized = true;
     
     LOG_INF("MQTT setup complete. Starting main loop...");
-    LOG_INF("Listening for servo commands on topics: %s, %s", 
-            MQTT_TOPIC_PAN_ANGLE, MQTT_TOPIC_TILT_ANGLE);
+    LOG_INF("Subscribed to pump control topic: %s", MQTT_TOPIC_PUMP_CONTROL);
+    
+    /* Subscribe to pump control topic */
+    ret = subscribe_to_pump_topic(&client_ctx);
+    if (ret != 0) {
+        LOG_ERR("Failed to subscribe to pump topic: %d", ret);
+    }
 
     /* Main MQTT loop */
     while (1) {
@@ -496,6 +674,11 @@ K_THREAD_DEFINE(mqtt_thread_id, 1024*3, mqtt_thread, NULL, NULL, NULL, 7, 0, 0);
 /************************************************************************/
 
 int main(void) {
-	LOG_INF("Starting Disco Board Servo Control Application");
-	return 0;
+    LOG_INF("Starting Disco Board Ultrasonic Node Application");
+    
+    /* Initialize distance and pump mutexes */
+    k_mutex_init(&distance_mutex);
+    k_mutex_init(&pump_mutex);
+    
+    return 0;
 }

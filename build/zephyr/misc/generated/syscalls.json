@@ -161,6 +161,14 @@
     ],
     [
         [
+            "const struct device *net_eth_get_ptp_clock_by_index",
+            "int index"
+        ],
+        "ethernet.h",
+        true
+    ],
+    [
+        [
             "int net_if_ipv6_addr_lookup_by_index",
             "const struct in6_addr *addr"
         ],
@@ -757,6 +765,22 @@
             "const struct device *dev, uint32_t cmd, uint32_t p"
         ],
         "uart.h",
+        true
+    ],
+    [
+        [
+            "int spi_transceive",
+            "const struct device *dev,\n\t\t\t     const struct spi_config *config,\n\t\t\t     const struct spi_buf_set *tx_bufs,\n\t\t\t     const struct spi_buf_set *rx_bufs"
+        ],
+        "spi.h",
+        true
+    ],
+    [
+        [
+            "int spi_release",
+            "const struct device *dev,\n\t\t\t  const struct spi_config *config"
+        ],
+        "spi.h",
         true
     ],
     [
@@ -3729,22 +3753,6 @@
     ],
     [
         [
-            "int spi_transceive",
-            "const struct device *dev,\n\t\t\t     const struct spi_config *config,\n\t\t\t     const struct spi_buf_set *tx_bufs,\n\t\t\t     const struct spi_buf_set *rx_bufs"
-        ],
-        "spi.h",
-        false
-    ],
-    [
-        [
-            "int spi_release",
-            "const struct device *dev,\n\t\t\t  const struct spi_config *config"
-        ],
-        "spi.h",
-        false
-    ],
-    [
-        [
             "int stepper_enable",
             "const struct device *dev, const bool enable"
         ],
@@ -4429,14 +4437,6 @@
             "void"
         ],
         "updatehub.h",
-        false
-    ],
-    [
-        [
-            "const struct device *net_eth_get_ptp_clock_by_index",
-            "int index"
-        ],
-        "ethernet.h",
         false
     ],
     [

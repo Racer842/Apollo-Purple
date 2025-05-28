@@ -1062,4 +1062,12 @@ m5stack_mbus_spi: &spi3 {};
  status = "okay";
 };
 # 0 "<command-line>" 2
+# 1 "/Users/jakerussell/Documents/csse4011/Apollo-Purple/Core2/socs/esp32_procpu.overlay" 1
+/ {
+ wifi_ap: wifi_ap {
+  compatible = "espressif,esp32-wifi";
+  status = "okay";
+ };
+};
+# 0 "<command-line>" 2
 # 1 "/Users/jakerussell/Documents/csse4011/zephyr/misc/empty_file.c"
