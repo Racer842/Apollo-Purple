@@ -9,6 +9,7 @@
 #include <lvgl.h>
 #include <stdio.h>
 #include <string.h>
+#include <zephyr/data/json.h>
 
 LOG_MODULE_REGISTER(core2_view, LOG_LEVEL_INF);
 
@@ -123,29 +124,37 @@ K_THREAD_DEFINE(wifi_thread_id, 956, wifi_thread, NULL, NULL, NULL, 7, 0, 0);
 
 #include <zephyr/data/json.h>
 
-struct Thingy {
-	float temp;
-};
 struct Payload {
-	struct Thingy thingy52[4];
+    double temp1;
+    double temp2;
+    double temp3;
+    double temp4;
+    char timestamp[32];  // or however long your ISO timestamp string is
 };
-static const struct json_obj_descr thingy_descr[] = {
-	JSON_OBJ_DESCR_PRIM(struct Thingy, temp, JSON_TOK_NUMBER)
-};
+
 static const struct json_obj_descr payload_descr[] = {
-	JSON_OBJ_DESCR_OBJ_ARRAY(struct Payload, thingy52, 4, thingy_descr)
+    JSON_OBJ_DESCR_PRIM(struct Payload, temp1, JSON_TOK_NUMBER),
+    JSON_OBJ_DESCR_PRIM(struct Payload, temp2, JSON_TOK_NUMBER),
+    JSON_OBJ_DESCR_PRIM(struct Payload, temp3, JSON_TOK_NUMBER),
+    JSON_OBJ_DESCR_PRIM(struct Payload, temp4, JSON_TOK_NUMBER),
+    JSON_OBJ_DESCR_PRIM(struct Payload, timestamp, JSON_TOK_STRING)
 };
+
 static int parse_temp_json(const char *buf) {
-	struct Payload data;
-	int ret = json_obj_parse_buf(buf, payload_descr, ARRAY_SIZE(payload_descr), &data);
-	if (ret < 0) {
-		LOG_ERR("JSON parse failed: %d", ret);
-		return ret;
-	}
-	for (int i = 0; i < 4; i++) {
-		temps[i] = data.thingy52[i].temp;
-	}
-	return 0;
+    struct Payload data;
+
+    int ret = json_obj_parse(buf, strlen(buf), payload_descr, ARRAY_SIZE(payload_descr), &data);
+    if (ret < 0) {
+        LOG_ERR("JSON parse failed: %d", ret);
+        return ret;
+    }
+
+    temps[0] = data.temp1;
+    temps[1] = data.temp2;
+    temps[2] = data.temp3;
+    temps[3] = data.temp4;
+
+    return 0;
 }
 
 
