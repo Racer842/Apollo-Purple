@@ -110,8 +110,13 @@ static const uint8_t target_uuid_d[12] = {
 
 // New UUID template for re-advertising (with flag at 12th byte)
 static const uint8_t relay_uuid_base[11] = {
+<<<<<<< HEAD
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB, 0x66, 0x66,
     0x66, 0x66, 0x66
+=======
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB, 0x48, 0xD2,
+    0xB0, 0x60, 0xD0
+>>>>>>> bc23596fdbf4763a4209ce90127347fa3552b26a
 };
 
 // Function to find the closest node
@@ -215,8 +220,14 @@ static void device_found(const bt_addr_le_t *addr,
 
                 if (node_id > 0) {
                     // Update node data with RSSI and payload
+<<<<<<< HEAD
                     update_node_data(node_id, rssi, &data[18]); // Last 8 bytes
                     
+=======
+                    update_node_data(node_id, rssi, &data[21]); // Last 8 bytes
+                    
+                    // printk("Node %c detected: RSSI=%d\n", 'A' + node_id - 1, rssi);
+>>>>>>> bc23596fdbf4763a4209ce90127347fa3552b26a
                 }
                 break;
             }
@@ -228,7 +239,11 @@ static void device_found(const bt_addr_le_t *addr,
 
 /* Reusable function to update and advertise */
 static void advertise_closest_node(void)
+<<<<<<< HEAD
 {   
+=======
+{
+>>>>>>> bc23596fdbf4763a4209ce90127347fa3552b26a
     uint8_t closest = find_closest_node();
     
     if (closest == 0) {
