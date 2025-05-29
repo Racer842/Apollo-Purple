@@ -123,38 +123,200 @@ K_THREAD_DEFINE(wifi_thread_id, 956, wifi_thread, NULL, NULL, NULL, 7, 0, 0);
 // --- Commented out JSON parsing block for later use --- //
 
 #include <zephyr/data/json.h>
+#include <stdlib.h>
 
-struct Payload {
-    double temp1;
-    double temp2;
-    double temp3;
-    double temp4;
-    char timestamp[32];  // or however long your ISO timestamp string is
+// Structure for multiple temperature strings (temp1, temp2, temp3, temp4)
+struct MultiTempPayload {
+    char temp1[16];
+    char temp2[16]; 
+    char temp3[16];
+    char temp4[16];
+    char timestamp[32];
 };
 
-static const struct json_obj_descr payload_descr[] = {
-    JSON_OBJ_DESCR_PRIM(struct Payload, temp1, JSON_TOK_NUMBER),
-    JSON_OBJ_DESCR_PRIM(struct Payload, temp2, JSON_TOK_NUMBER),
-    JSON_OBJ_DESCR_PRIM(struct Payload, temp3, JSON_TOK_NUMBER),
-    JSON_OBJ_DESCR_PRIM(struct Payload, temp4, JSON_TOK_NUMBER),
-    JSON_OBJ_DESCR_PRIM(struct Payload, timestamp, JSON_TOK_STRING)
+// Structure for single temperature string
+struct SingleTempPayload {
+    char temperature_string[16];
+    int sensor_id;
+    char timestamp[32];
 };
 
-static int parse_temp_json(const char *buf) {
-    struct Payload data;
+// JSON descriptors for multiple temperature payload
+static const struct json_obj_descr multi_temp_descr[] = {
+    JSON_OBJ_DESCR_PRIM(struct MultiTempPayload, temp1, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct MultiTempPayload, temp2, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct MultiTempPayload, temp3, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct MultiTempPayload, temp4, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct MultiTempPayload, timestamp, JSON_TOK_STRING)
+};
 
-    int ret = json_obj_parse(buf, strlen(buf), payload_descr, ARRAY_SIZE(payload_descr), &data);
+// JSON descriptors for single temperature payload
+static const struct json_obj_descr single_temp_descr[] = {
+    JSON_OBJ_DESCR_PRIM(struct SingleTempPayload, temperature_string, JSON_TOK_STRING),
+    JSON_OBJ_DESCR_PRIM(struct SingleTempPayload, sensor_id, JSON_TOK_NUMBER),
+    JSON_OBJ_DESCR_PRIM(struct SingleTempPayload, timestamp, JSON_TOK_STRING)
+};
+
+// Helper function to extract numeric value from temperature string (e.g., "25.1°C" -> 25.1)
+static float extract_temp_from_string(const char *temp_str) {
+    if (!temp_str || strlen(temp_str) == 0) {
+        return 25.0; // Default temperature
+    }
+    
+    // Create a buffer to hold the numeric part
+    char temp_buffer[16];
+    int i = 0;
+    
+    // Copy only the numeric characters (including decimal point and minus sign)
+    for (int j = 0; j < strlen(temp_str) && i < sizeof(temp_buffer) - 1; j++) {
+        char c = temp_str[j];
+        if ((c >= '0' && c <= '9') || c == '.' || c == '-') {
+            temp_buffer[i++] = c;
+        } else {
+            // Stop at first non-numeric character (like °)
+            break;
+        }
+    }
+    temp_buffer[i] = '\0';
+    
+    // Use strtof to parse the numeric part
+    char *endptr;
+    float temp = strtof(temp_buffer, &endptr);
+    
+    // Validate the result
+    if (endptr == temp_buffer || temp < -50.0 || temp > 100.0) {
+        LOG_WRN("Invalid temperature parsed: %.1f from '%s', using default", temp, temp_str);
+        return 25.0;
+    }
+    
+    LOG_DBG("Parsed temperature: %.1f from '%s'", temp, temp_str);
+    return temp;
+}
+
+// // Parse multiple temperature payload (temp1, temp2, temp3, temp4)
+// static int parse_multi_temp_json(const char *buf) {
+//     struct MultiTempPayload data;
+    
+//     // Clear the structure first
+//     memset(&data, 0, sizeof(data));
+
+//     int ret = json_obj_parse(buf, strlen(buf), multi_temp_descr, ARRAY_SIZE(multi_temp_descr), &data);
+//     if (ret < 0) {
+//         LOG_ERR("Multi-temp JSON parse failed: %d", ret);
+//         return ret;
+//     }
+
+//     // Extract temperatures from strings
+//     temps[0] = extract_temp_from_string(data.temp1);
+//     temps[1] = extract_temp_from_string(data.temp2);
+//     temps[2] = extract_temp_from_string(data.temp3);
+//     temps[3] = extract_temp_from_string(data.temp4);
+
+//     LOG_INF("Parsed multi-temp: %d°C, %d°C, %d°C, %d°C", 
+//             temps[0], temps[1], temps[2], temps[3]);
+
+//     return 0;
+// }
+
+// Parse single temperature payload (temperature_string, sensor_id)
+static int parse_single_temp_json(const char *buf) {
+    struct SingleTempPayload data;
+    
+    // Clear the structure first
+    memset(&data, 0, sizeof(data));
+
+    int ret = json_obj_parse(buf, strlen(buf), single_temp_descr, ARRAY_SIZE(single_temp_descr), &data);
     if (ret < 0) {
-        LOG_ERR("JSON parse failed: %d", ret);
+        LOG_ERR("Single-temp JSON parse failed: %d", ret);
         return ret;
     }
 
-    temps[0] = data.temp1;
-    temps[1] = data.temp2;
-    temps[2] = data.temp3;
-    temps[3] = data.temp4;
+    // Extract temperature from string
+    float temp_value = extract_temp_from_string(data.temperature_string);
+    
+    // Update the appropriate sensor based on sensor_id (1-4 maps to index 0-3)
+    int sensor_index = data.sensor_id - 1;
+    if (sensor_index >= 0 && sensor_index < 4) {
+        temps[sensor_index] = temp_value;
+        LOG_INF("Parsed single-temp: Sensor %d = %.1f°C", data.sensor_id, temp_value);
+    } else {
+        LOG_WRN("Invalid sensor_id: %d, updating sensor 0", data.sensor_id);
+        temps[0] = temp_value;
+    }
 
     return 0;
+}
+
+// Simple manual JSON parser for temperature values
+static int parse_temp_json_manual(const char *json_str) {
+    LOG_INF("Manual parsing JSON: %s", json_str);
+    
+    // Look for temp1, temp2, temp3, temp4 patterns
+    const char *temp_keys[] = {"temp1", "temp2", "temp3", "temp4"};
+    
+    for (int i = 0; i < 4; i++) {
+        char search_pattern[16];
+        snprintf(search_pattern, sizeof(search_pattern), "\"%s\":", temp_keys[i]);
+        
+        const char *temp_start = strstr(json_str, search_pattern);
+        if (temp_start) {
+            // Move past the key and colon
+            temp_start += strlen(search_pattern);
+            
+            // Skip whitespace and opening quote
+            while (*temp_start == ' ' || *temp_start == '\t' || *temp_start == '"') {
+                temp_start++;
+            }
+            
+            // Find the end of the temperature value (closing quote)
+            const char *temp_end = strchr(temp_start, '"');
+            if (temp_end) {
+                // Extract the temperature string
+                int temp_len = temp_end - temp_start;
+                if (temp_len > 0 && temp_len < 16) {
+                    char temp_str[16];
+                    strncpy(temp_str, temp_start, temp_len);
+                    temp_str[temp_len] = '\0';
+                    
+                    // Parse the temperature value
+                    temps[i] = extract_temp_from_string(temp_str);
+                    LOG_INF("Extracted temp%d: %s -> %.1f°C", i+1, temp_str, temps[i]);
+                } else {
+                    LOG_WRN("Invalid temperature string length for temp%d", i+1);
+                    temps[i] = 25.0; // Default value
+                }
+            } else {
+                LOG_WRN("Could not find closing quote for temp%d", i+1);
+                temps[i] = 25.0; // Default value
+            }
+        } else {
+            LOG_WRN("Could not find temp%d in JSON", i+1);
+            temps[i] = 25.0; // Default value
+        }
+    }
+    
+    LOG_INF("Parsed temperatures: %.1f°C, %.1f°C, %.1f°C, %.1f°C", 
+            temps[0], temps[1], temps[2], temps[3]);
+    
+    return 0;
+}
+
+// Updated main JSON parsing function
+static int parse_temp_json(const char *buf) {
+    LOG_INF("Parsing JSON: %s", buf);
+    
+    // Check if this looks like a multi-temperature JSON
+    if (strstr(buf, "temp1") != NULL && strstr(buf, "temp2") != NULL) {
+        return parse_temp_json_manual(buf);
+    }
+    // For single temperature format, you can add similar manual parsing here
+    else if (strstr(buf, "temperature_string") != NULL) {
+        // For now, use the existing single temp parser or add manual parsing
+        return parse_single_temp_json(buf);
+    }
+    
+    LOG_ERR("Unknown JSON format");
+    return -1;
 }
 
 
