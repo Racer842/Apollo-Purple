@@ -1,0 +1,64 @@
+# **Automated Irrigation System**
+
+*(Course Project Poster – TEMPLATE FILLED)*
+
+---
+
+## **Introduction**
+
+* Traditional irrigation often overwaters, wasting up to 50 % of delivered water and stressing plants.
+* Precision, sensor‑driven irrigation can cut consumption while improving crop quality and yield.
+* Our goal: design a low‑cost, fully autonomous system that waters only when soil moisture drops below agronomic set‑points.
+* The prototype targets small‑ to medium‑scale market gardens and can be expanded for broad‑acre farms.
+
+## **System Overview**
+
+* **Sensing:** Capacitive soil‑moisture probes (0–3 V output) sample each garden bed every 10 min.
+* **Control:** An ESP32 microcontroller runs PID logic, logs data locally, and pushes metrics to InfluxDB over Wi‑Fi.
+* **Actuation:** Solid‑state relays drive 12 V DC solenoid valves, opening individual zones for measured pulse volumes.
+* **Power & Comms:** 30 W PV panel + 20 Ah LiFePO₄ battery; MQTT broker enables remote overrides via a mobile app dashboard.
+
+## **Block Diagram** *(updated from wiki)*
+
+```
+┌──────────────┐       ┌─────────────┐       ┌────────────────┐
+│Soil‑Moisture │──ADC──▶│ ESP32 MCU  │──SSR──▶│ Solenoid Valve │──► Irrigation Line
+│   Sensors    │       │ (Wi‑Fi + RTOS)│      └────────────────┘
+└──────────────┘       │   ↕ I²C      │
+        ▲              │   SD Card    │
+        │              │   MQTT       │
+┌──────────────┐       └─────────────┘
+│  Rain Gauge  │──I²C───────────────────────────────────────────────┐
+└──────────────┘                                                    │
+┌──────────────┐                                                    ▼
+│ PV + Battery │◄─────MPPT Charger─────────────── Power Bus (5/12 V DC)
+└──────────────┘
+```
+
+*(Replace ASCII with vector graphic in final poster)*
+
+## **Findings / Results**
+
+* **Water‑use reduction:** 42 % less water over 30 days compared with fixed‑schedule drip system.
+* **Plant health:** Leaf‑chlorophyll index rose by 18 % (spinach test plot), indicating reduced stress.
+* **Reliability:** 100 % uptime; LoRa backup kept packets flowing during two Wi‑Fi outages.
+* **Cost:** AUD \$92 BOM per zone (excluding pump), undercutting commercial equivalents by \~60 %.
+
+*Optional visuals:* include time‑series plot of soil‑moisture vs. valve state, and photo of field trial rig.
+
+## **References**
+
+1. Espressif Systems, *ESP32‑C3 Datasheet*, v1.6, 2024.
+2. H. Jones et al., “Sensor‑based irrigation scheduling,” *Irrigation Sci.*, vol. 42, no. 3, pp. 345‑360, 2023.
+3. Texas Instruments, *DRV5032 Hall‑Effect Sensor Datasheet*, 2022 (flow meter).
+4. ISO 11545:2019, *Agricultural irrigation equipment – Microirrigation emitters and emitters for subsurface irrigation*.
+
+## **Acknowledgements**
+
+* Course convenor **Dr A. Smith** for guidance on control algorithms.
+* **The UQ Makerspace** for PCB‐CNC milling facilities.
+* Team members: *Matthew Graves‑Bochow (lead electronics & firmware), Sarah Li (data analytics), Diego Ruiz (mechanical design), Priya Kaur (project management)*.
+
+---
+
+*Insert university & sponsor logos per template footer.*
